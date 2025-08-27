@@ -356,6 +356,66 @@ rebuild_all() {
   ok "Rebuild completo"
 }
 
+# Lê NAME e DEPENDS de uma recipe
+parse_recipe_meta() {
+    recipe=$1
+    NAME=""
+    DEPENDS=""
+    # carrega apenas as variáveis de interesse
+    eval "$(grep -E '^(NAME|DEPENDS)=' "$recipe")"
+    echo "$NAME|$DEPENDS"
+}
+
+# Monta lista de dependências (formato: pkg|dep1 dep2)
+collect_recipes_meta() {
+    for r in $(find "$REPO" -type f -name "*.recipe"); do
+        parse_recipe_meta "$r"
+    done
+}
+
+# Ordenação topológica simples (Kahn’s algorithm)
+topo_sort() {
+    # entrada: lista "pkg|deps"
+    meta="$1"
+
+    pkgs=$(echo "$meta" | cut -d'|' -f1)
+    done=""
+    while [ -n "$pkgs" ]; do
+        progress=0
+        for p in $pkgs; do
+            deps=$(echo "$meta" | grep "^$p|" | cut -d'|' -f2-)
+            # checa se todos deps já estão no "done"
+            ok=1
+            for d in $deps; do
+                echo "$done" | grep -qw "$d" || ok=0
+            done
+            if [ $ok -eq 1 ]; then
+                echo "$p"
+                done="$done $p"
+                pkgs=$(echo "$pkgs" | sed "s/\b$p\b//")
+                progress=1
+            fi
+        done
+        [ $progress -eq 0 ] && {
+            echo "Erro: ciclo de dependências detectado!"
+            exit 1
+        }
+    done
+}
+
+# Função principal de rebuild-all
+rebuild_all() {
+    meta="$(collect_recipes_meta)"
+    order=$(topo_sort "$meta")
+
+    for pkg in $order; do
+        recipe=$(find "$REPO" -type f -name "$pkg*.recipe" | head -n1)
+        if [ -n "$recipe" ]; then
+            echo "[rebuild] $pkg"
+            build_package "$recipe"
+        fi
+    done
+}
 # ========================= CLI =========================
 cmd=${1:-}
 case "$cmd" in
