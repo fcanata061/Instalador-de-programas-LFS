@@ -1,0 +1,261 @@
+======================================================
+TUTORIAL COMPLETO — USO DO SCRIPT lfs-builder.sh
+======================================================
+
+Este documento descreve passo a passo como usar o
+script POSIX `lfs-builder.sh` para construir um sistema
+Linux From Scratch (LFS) automatizado via receitas.
+
+------------------------------------------------------
+1. PRÉ-REQUISITOS
+------------------------------------------------------
+
+No host (seu Linux atual) devem estar instalados:
+
+ - sh (POSIX shell)
+ - coreutils
+ - tar
+ - gzip, bzip2, xz, zstd
+ - patch
+ - make
+ - gcc, binutils
+ - fakeroot (para empacotar pós-toolchain)
+ - opcional: unzip, curl ou wget
+
+------------------------------------------------------
+2. VARIÁVEIS DE AMBIENTE
+------------------------------------------------------
+
+Defina variáveis de diretório antes de usar:
+
+    export REPO=$PWD/repo        # onde ficam as receitas
+    export SOURCES=$PWD/sources  # tarballs e patches
+    export WORK=$PWD/build       # diretório de build
+    export DESTDIR=$PWD/destdir  # instalação temporária
+    export PKG=$PWD/packages     # pacotes finais
+    export SYSROOT=/             # destino real (/tools na toolchain)
+    export STATE=$PWD/.state     # metadados
+    export LOGDIR=$PWD/logs      # logs
+
+------------------------------------------------------
+3. ÁRVORE DE DIRETÓRIOS
+------------------------------------------------------
+
+Estrutura típica:
+
+repo/
+ ├─ base/
+ │   ├─ binutils-2.39/
+ │   │   ├─ binutils-pass1.recipe
+ │   │   └─ binutils.recipe
+ │   ├─ gcc-12.2.0/
+ │   │   ├─ gcc-pass1.recipe
+ │   │   └─ gcc.recipe
+ │   └─ glibc-2.36/
+ │       └─ glibc.recipe
+ ├─ desktop/
+ │   └─ firefox-117.0/
+ │       └─ firefox.recipe
+sources/
+ ├─ binutils-2.39.tar.xz
+ ├─ gcc-12.2.0.tar.xz
+ ├─ glibc-2.36.tar.xz
+ ├─ firefox-117.0.tar.bz2
+ └─ patches/
+     └─ gcc-fix1.patch
+
+------------------------------------------------------
+4. FORMATO DE RECEITA
+------------------------------------------------------
+
+Receitas são arquivos `.recipe` que definem variáveis
+shell. Campos suportados:
+
+    NAME="gcc"                 # nome lógico
+    VERSION="12.2.0"           # versão
+    CATEGORY="base"            # base|x11|extras|desktop
+    PHASE="toolchain"          # "toolchain" se for etapa inicial
+    PKGNAME="gcc-pass1"        # opcional, nome diferente
+    SOURCE="gcc-12.2.0.tar.xz" # fonte em $SOURCES
+    PATCHES="gcc-fix1.patch"   # lista de patches
+    DEPENDS="binutils glibc"   # dependências lógicas
+    WORKDIR_SUBDIR="gcc-12.2.0"# subdir após extração
+    CONFIGURE="./configure"
+    CONFIGURE_ARGS="--prefix=/tools --disable-nls"
+    MAKE_ARGS="-j$(nproc)"
+    INSTALL_ARGS="install"
+    STRIP_BINARIES="yes"
+    POST_REMOVE_HOOK="/caminho/script.sh"
+
+Avançado: pode-se definir funções `build_step()` e
+`install_step()` para substituir comportamento padrão.
+
+------------------------------------------------------
+5. COMANDOS DO SCRIPT
+------------------------------------------------------
+
+    sh lfs-builder.sh build <arquivo.recipe>
+        Compila, instala (se toolchain apenas em DESTDIR;
+        caso contrário empacota em $PKG e instala no $SYSROOT).
+
+    sh lfs-builder.sh remove <name>
+        Remove pacote instalado, usando lista de arquivos.
+
+    sh lfs-builder.sh info <name>
+        Mostra informações do pacote instalado.
+
+    sh lfs-builder.sh list
+        Lista pacotes instalados.
+
+    sh lfs-builder.sh status <name>
+        Verifica se pacote está instalado.
+
+    sh lfs-builder.sh rebuild-all
+        Recompila todo o sistema em ordem de dependências.
+
+------------------------------------------------------
+6. FLUXO DA TOOLCHAIN
+------------------------------------------------------
+
+Durante a construção inicial do LFS, use `PHASE=toolchain`.
+Nesse caso:
+
+ - O pacote é compilado.
+ - Instalado apenas em $DESTDIR.
+ - Não é empacotado.
+ - Serve para compor o toolchain temporário em /tools.
+
+Exemplo: binutils-pass1, gcc-pass1, glibc.
+
+Após terminar a toolchain, remova `PHASE=toolchain` das
+receitas seguintes, e os pacotes serão empacotados e
+instalados com fakeroot em $SYSROOT.
+
+------------------------------------------------------
+7. EXEMPLOS DE RECEITAS
+------------------------------------------------------
+
+(1) Binutils Pass1
+------------------
+Arquivo: repo/base/binutils-2.39/binutils-pass1.recipe
+
+    NAME=binutils
+    PKGNAME=binutils-pass1
+    VERSION=2.39
+    CATEGORY=base
+    PHASE=toolchain
+    SOURCE=binutils-2.39.tar.xz
+    CONFIGURE_ARGS="--prefix=/tools --with-sysroot --disable-nls --disable-werror"
+    MAKE_ARGS="-j$(nproc)"
+    STRIP_BINARIES=yes
+
+(2) GCC Pass1
+-------------
+Arquivo: repo/base/gcc-12.2.0/gcc-pass1.recipe
+
+    NAME=gcc
+    PKGNAME=gcc-pass1
+    VERSION=12.2.0
+    CATEGORY=base
+    PHASE=toolchain
+    SOURCE=gcc-12.2.0.tar.xz
+    DEPENDS="binutils"
+    CONFIGURE_ARGS="--prefix=/tools --without-headers --enable-languages=c --disable-nls --disable-shared"
+    MAKE_ARGS="-j$(nproc)"
+    STRIP_BINARIES=yes
+
+(3) Glibc
+---------
+Arquivo: repo/base/glibc-2.36/glibc.recipe
+
+    NAME=glibc
+    VERSION=2.36
+    CATEGORY=base
+    SOURCE=glibc-2.36.tar.xz
+    DEPENDS="binutils gcc"
+    CONFIGURE_ARGS="--prefix=/usr --disable-werror"
+    MAKE_ARGS="-j$(nproc)"
+    STRIP_BINARIES=yes
+
+(4) GCC Final
+-------------
+Arquivo: repo/base/gcc-12.2.0/gcc.recipe
+
+    NAME=gcc
+    VERSION=12.2.0
+    CATEGORY=base
+    SOURCE=gcc-12.2.0.tar.xz
+    DEPENDS="binutils glibc"
+    CONFIGURE_ARGS="--prefix=/usr --enable-languages=c,c++ --disable-multilib"
+    MAKE_ARGS="-j$(nproc)"
+    STRIP_BINARIES=yes
+
+(5) Firefox
+-----------
+Arquivo: repo/desktop/firefox-117.0/firefox.recipe
+
+    NAME=firefox
+    VERSION=117.0
+    CATEGORY=desktop
+    SOURCE=firefox-117.0.tar.bz2
+    DEPENDS="gcc glibc"
+    CONFIGURE_ARGS="./mach configure"
+    MAKE_ARGS="./mach build"
+    INSTALL_ARGS="./mach install"
+    STRIP_BINARIES=no
+
+------------------------------------------------------
+8. EXEMPLO DE USO COMPLETO
+------------------------------------------------------
+
+Compilar toolchain:
+
+    sh lfs-builder.sh build repo/base/binutils-2.39/binutils-pass1.recipe
+    sh lfs-builder.sh build repo/base/gcc-12.2.0/gcc-pass1.recipe
+    sh lfs-builder.sh build repo/base/glibc-2.36/glibc.recipe
+
+Compilar gcc final:
+
+    sh lfs-builder.sh build repo/base/gcc-12.2.0/gcc.recipe
+
+Instalar Firefox:
+
+    sh lfs-builder.sh build repo/desktop/firefox-117.0/firefox.recipe
+
+Verificar instalação:
+
+    sh lfs-builder.sh list
+    sh lfs-builder.sh info gcc
+    sh lfs-builder.sh status firefox
+
+Remover:
+
+    sh lfs-builder.sh remove firefox
+
+Recompilar tudo:
+
+    sh lfs-builder.sh rebuild-all
+
+------------------------------------------------------
+9. LOGS E ESTADO
+------------------------------------------------------
+
+ - Logs ficam em $LOGDIR/<pkg>.log
+ - Estado em $STATE:
+   - <name>.installed → data/hora de instalação
+   - <name>.files     → lista de arquivos instalados
+   - <name>.meta      → metadados (PKGID, CATEGORY etc)
+
+------------------------------------------------------
+10. CONCLUSÃO
+------------------------------------------------------
+
+O `lfs-builder.sh` fornece um fluxo simples, reproduzível e
+modular para construção de um Linux From Scratch.
+
+Você pode estender com novas categorias (x11, extras, etc.),
+criar receitas customizadas e manter um sistema gerenciável.
+
+======================================================
+FIM DO TUTORIAL
+======================================================
